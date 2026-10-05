@@ -367,9 +367,10 @@ impl HistoryFileState {
 
 /// Parse and validate a history file from a buffer.
 ///
-/// Deserializes the JSON in `buffer` into a `HistoryFileState` and runs
-/// `validate()`. Used by both the pipeline (when downloading per-checkpoint
-/// history files) and repair (when reading destination-side history files).
+/// Deserializes the JSON in `buffer` into a `HistoryFileState`, runs
+/// `validate()`, and requires `currentLedger` to be the checkpoint named by
+/// `path`. Used by both the pipeline (when downloading per-checkpoint history
+/// files) and repair (when reading destination-side history files).
 pub fn parse_history(buffer: &opendal::Buffer, path: &str) -> Result<HistoryFileState, Error> {
     use bytes::Buf;
     let state: HistoryFileState =
@@ -378,6 +379,17 @@ pub fn parse_history(buffer: &opendal::Buffer, path: &str) -> Result<HistoryFile
             error: e.to_string(),
         })?;
     state.validate()?;
+    // Otherwise a source could serve another checkpoint's state, and its
+    // buckets, under this name, and it could later become the destination's
+    // root .well-known.
+    if checkpoint_from_path(path) != Some(state.current_ledger) {
+        return Err(Error::InvalidCurrentLedger {
+            reason: format!(
+                "{} does not match the checkpoint in {path}",
+                state.current_ledger
+            ),
+        });
+    }
     Ok(state)
 }
 
