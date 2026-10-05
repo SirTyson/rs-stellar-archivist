@@ -1231,6 +1231,9 @@ where
         let _dg = crate::metrics::DecodeGuard::enter();
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, std::io::Error>);
         let mut decoder = GzipDecoder::new(BufReader::new(StreamReader::new(stream)));
+        // Decode every gzip member so bytes after the first one are parsed
+        // rather than committed unchecked (see verify_bucket_maybe_write).
+        decoder.multiple_members(true);
 
         let mut decompressed = Vec::new();
         let mut buf = vec![0u8; DECOMPRESS_BUFFER_SIZE];
