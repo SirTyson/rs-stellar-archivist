@@ -506,20 +506,11 @@ impl RepairOperation {
     /// success with `.well-known` still broken.
     async fn repair_well_known(&self, highest_checkpoint: u32) -> bool {
         let history_path = history_format::checkpoint_path("history", highest_checkpoint);
-        let max_retries = self.pipeline_config.storage_config.max_retries as u32;
-        let retry_min_delay_ms = self
-            .pipeline_config
-            .storage_config
-            .retry_min_delay
-            .as_millis() as u64;
+        let storage_config = &self.pipeline_config.storage_config;
 
-        match utils::with_retries(
-            max_retries,
-            retry_min_delay_ms,
-            "probe",
-            &history_path,
-            || self.dst_store.exists(&history_path),
-        )
+        match utils::with_retries(storage_config, "probe", &history_path, || {
+            self.dst_store.exists(&history_path)
+        })
         .await
         {
             Ok(true) => {}
@@ -543,8 +534,7 @@ impl RepairOperation {
             &self.dst_store,
             &history_path,
             self.pipeline_config.source_network_passphrase.as_deref(),
-            max_retries,
-            retry_min_delay_ms,
+            storage_config,
         )
         .await
         {
@@ -627,11 +617,7 @@ impl Operation for RepairOperation {
         // Try destination .well-known first (determines what range to repair)
         let dst_checkpoint = match utils::probe_well_known_history_file(
             &self.dst_store,
-            self.pipeline_config.storage_config.max_retries as u32,
-            self.pipeline_config
-                .storage_config
-                .retry_min_delay
-                .as_millis() as u64,
+            &self.pipeline_config.storage_config,
         )
         .await
         {
@@ -656,11 +642,7 @@ impl Operation for RepairOperation {
             // Fall back to source .well-known
             let src_state = utils::fetch_well_known_history_file(
                 &self.src_store,
-                self.pipeline_config.storage_config.max_retries as u32,
-                self.pipeline_config
-                    .storage_config
-                    .retry_min_delay
-                    .as_millis() as u64,
+                &self.pipeline_config.storage_config,
             )
             .await
             .map_err(|e| pipeline::Error::RepairOperation(Error::Utils(e)))?;
