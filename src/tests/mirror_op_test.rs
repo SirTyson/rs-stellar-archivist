@@ -1234,3 +1234,43 @@ async fn mirror_fails_on_corrupt_destination_well_known() {
         "error should surface the parse failure, got: {err}"
     );
 }
+
+/// Regression: a source HAS with a traversal string in a state-2
+/// `next.output` must never cause a write outside the mirror destination.
+#[rstest]
+#[case::plain(false)]
+#[case::atomic(true)]
+#[tokio::test]
+async fn test_mirror_rejects_bucket_path_traversal(#[case] atomic_file_writes: bool) {
+    let tmp = TempDir::new().unwrap();
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("d/dst");
+    copy_testnet_small_archive(&src).unwrap();
+    // The HTTP client normalizes the traversal away, so the source serves this
+    let fake = "a".repeat(64);
+    std::fs::create_dir_all(src.join("outside")).unwrap();
+    std::fs::write(
+        src.join(format!("outside/bucket-{fake}.xdr.gz")),
+        b"payload",
+    )
+    .unwrap();
+
+    let history = src.join("history/00/00/00/history-0000003f.json");
+    let mut has: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&history).unwrap()).unwrap();
+    let level = has["currentBuckets"][0].clone();
+    has["currentBuckets"][0]["next"] = serde_json::json!({
+        "state": 2,
+        "output": format!("../../../../outside/bucket-{fake}"),
+        "curr": level["curr"],
+        "snap": level["snap"],
+    });
+    std::fs::write(&history, serde_json::to_vec(&has).unwrap()).unwrap();
+
+    let (src_url, _server) = start_http_server(&src).await;
+    let mut config = MirrorConfig::new(src_url, file_url_from_path(&dst));
+    config.storage_config.atomic_file_writes = atomic_file_writes;
+
+    assert!(run_mirror(config).await.is_err());
+    assert!(!tmp.path().join("outside").exists());
+}

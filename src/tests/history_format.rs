@@ -1,7 +1,8 @@
 use crate::history_format::{
-    checkpoint_prefix, count_checkpoints_in_range, is_checkpoint, is_pubnet_passphrase,
-    is_valid_bucket_hash, round_to_lower_checkpoint, round_to_upper_checkpoint, scp_expected,
-    HistoryFileState, FIRST_SCP_CHECKPOINT, GENESIS_CHECKPOINT_LEDGER, PUBLIC_NETWORK_PASSPHRASE,
+    bucket_path, checkpoint_prefix, count_checkpoints_in_range, hash_prefix, is_checkpoint,
+    is_pubnet_passphrase, is_valid_bucket_hash, round_to_lower_checkpoint,
+    round_to_upper_checkpoint, scp_expected, HistoryFileState, FIRST_SCP_CHECKPOINT,
+    GENESIS_CHECKPOINT_LEDGER, PUBLIC_NETWORK_PASSPHRASE,
 };
 use rstest::*;
 use std::fs;
@@ -226,6 +227,8 @@ fn test_invalid_current_ledger(
 const VALID_HASH: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 const VALID_HASH2: &str = "fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321";
 const ZERO_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+const TRAVERSAL_HASH: &str =
+    "../../../outside/bucket-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 /// Helper to build next state JSON for testing
 fn next_state_json(state: u32, fields: &[(&str, serde_json::Value)]) -> serde_json::Value {
@@ -245,6 +248,16 @@ fn next_state_json(state: u32, fields: &[(&str, serde_json::Value)]) -> serde_js
 // State 2 (merging) requires both curr and snap fields
 #[case::state2_missing_curr(2, &[("snap", serde_json::json!(VALID_HASH))], 2)]
 #[case::state2_missing_snap(2, &[("curr", serde_json::json!(VALID_HASH))], 2)]
+// Regression: state 2 `output` used to bypass validation and become a bucket path
+#[case::state2_with_output(
+    2,
+    &[
+        ("output", serde_json::json!(TRAVERSAL_HASH)),
+        ("curr", serde_json::json!(VALID_HASH)),
+        ("snap", serde_json::json!(VALID_HASH2)),
+    ],
+    2
+)]
 fn test_invalid_next_state_structure(
     mut canonical_v1_json: serde_json::Value,
     #[case] state: u32,
@@ -306,6 +319,34 @@ fn test_valid_next_state_2(
     canonical_v1_json["currentBuckets"][0]["next"] = next;
     let has: HistoryFileState = serde_json::from_value(canonical_v1_json).unwrap();
     assert!(has.validate().is_ok());
+}
+
+// State 1 is the only state whose `output` is harvested as a bucket
+#[rstest]
+fn test_state_1_rejects_malformed_output(mut canonical_v1_json: serde_json::Value) {
+    canonical_v1_json["currentBuckets"][0]["next"] =
+        next_state_json(1, &[("output", serde_json::json!(TRAVERSAL_HASH))]);
+    let has: HistoryFileState = serde_json::from_value(canonical_v1_json).unwrap();
+    assert!(matches!(
+        has.validate().unwrap_err(),
+        crate::history_format::Error::MalformedBucketHash { .. }
+    ));
+}
+
+#[rstest]
+#[case::short("abcdef")]
+#[case::long("abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567890")]
+#[case::non_hex("gbcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")]
+#[case::traversal(TRAVERSAL_HASH)]
+fn test_bucket_path_rejects_invalid_hashes(#[case] hash: &str) {
+    assert!(matches!(
+        bucket_path(hash).unwrap_err(),
+        crate::history_format::Error::MalformedBucketHash { .. }
+    ));
+    assert!(matches!(
+        hash_prefix(hash).unwrap_err(),
+        crate::history_format::Error::MalformedBucketHash { .. }
+    ));
 }
 
 #[rstest]
