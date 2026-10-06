@@ -199,6 +199,15 @@ impl HistoryFileState {
                 }
             }
             2 => {
+                if level.next.output.is_some() {
+                    return Err(Error::InvalidNextState {
+                        prefix: prefix.to_string(),
+                        level: index,
+                        state: 2,
+                        issue: "has output field".to_string(),
+                    });
+                }
+
                 if level.next.curr.is_none() {
                     return Err(Error::InvalidNextState {
                         prefix: prefix.to_string(),
@@ -459,9 +468,9 @@ pub fn checkpoint_prefix(checkpoint: u32) -> String {
 
 // Convert first 6 hex chars of hash to directory path (e.g., "abcdef..." -> "ab/cd/ef")
 pub fn hash_prefix(hash: &str) -> Result<String, Error> {
-    if hash.len() < 6 {
+    if !is_valid_bucket_hash(hash) {
         return Err(Error::MalformedBucketHash {
-            reason: format!("hash too short: '{hash}'"),
+            reason: format!("invalid hash: {hash}"),
         });
     }
     Ok(format!("{}/{}/{}", &hash[0..2], &hash[2..4], &hash[4..6]))

@@ -62,6 +62,25 @@ impl Error {
 
 pub type StorageRef = Arc<dyn Storage + Send + Sync>;
 
+/// Archive object paths are relative, `/`-separated, and built only from
+/// `[A-Za-z0-9._-]` segments, so no path can resolve outside the store root
+/// on any platform.
+fn validate_object_path(object: &str) -> Result<(), Error> {
+    let valid = object.split('/').all(|segment| {
+        !matches!(segment, "" | "." | "..")
+            && segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    });
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::fatal(format!(
+            "Invalid archive object path: {object}"
+        )))
+    }
+}
+
 /// Upload part/block size for object-store writes. Meets every backend's
 /// minimum part size (5 MiB on S3/GCS/B2), keeps large files under per-object
 /// part-count caps (50,000 blocks on Azure, 10,000 parts elsewhere), and
@@ -105,8 +124,8 @@ impl StagedWriter {
 
     /// Stage at `<root>/<object>.tmp`, creating parent directories.
     async fn fs_staged(root: &Path, object: &str) -> Result<Self, Error> {
-        let object_rel = object.trim_start_matches('/');
-        let final_path = root.join(object_rel);
+        validate_object_path(object)?;
+        let final_path = root.join(object);
         let tmp_path = final_path.with_added_extension("tmp");
 
         if let Some(parent) = final_path.parent() {
@@ -452,13 +471,13 @@ impl OpendalStore {
     }
 
     /// Convert an archive object path to the full key with prefix
-    fn object_to_key(&self, object: &str) -> String {
-        let object = object.trim_start_matches('/');
+    fn object_to_key(&self, object: &str) -> Result<String, Error> {
+        validate_object_path(object)?;
         if self.prefix.is_empty() {
-            object.to_string()
+            Ok(object.to_string())
         } else {
             let prefix = self.prefix.trim_end_matches('/');
-            format!("{prefix}/{object}")
+            Ok(format!("{prefix}/{object}"))
         }
     }
 
@@ -781,7 +800,7 @@ pub fn from_io_error(err: std::io::Error, context: &str) -> Error {
 #[async_trait]
 impl Storage for OpendalStore {
     async fn open_reader(&self, object: &str) -> Result<Reader, Error> {
-        let key = self.object_to_key(object);
+        let key = self.object_to_key(object)?;
         tracing::debug!("open_reader: object={}, key={}", object, key);
 
         // Use plain reader() - the .chunk() option is for concurrent reading of
@@ -801,7 +820,7 @@ impl Storage for OpendalStore {
     }
 
     async fn exists(&self, object: &str) -> Result<bool, Error> {
-        let key = self.object_to_key(object);
+        let key = self.object_to_key(object)?;
 
         match self.operator.stat(&key).await {
             Ok(metadata) => {
@@ -829,7 +848,7 @@ impl Storage for OpendalStore {
             return Err(Error::fatal("Write not supported by this backend"));
         }
         if self.atomic_writes {
-            let key = self.object_to_key(object);
+            let key = self.object_to_key(object)?;
             let mut writer_fut = self.operator.writer_with(&key);
             // Object stores need an explicit chunk size: without one, every
             // incoming stream chunk becomes its own upload part, and azblob
