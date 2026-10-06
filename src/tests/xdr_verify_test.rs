@@ -785,6 +785,29 @@ fn test_parse_transaction_entries_rejects_length_beyond_input() {
     );
 }
 
+/// Only the generalized set of a version-1 entry is hashed, so anything in its
+/// legacy set was never committed to by the ledger header and must be rejected.
+#[rstest]
+#[case::legacy_txs(TransactionSet {
+    previous_ledger_hash: Hash([0; 32]),
+    txs: vec![tx_v1_envelope(2)].try_into().unwrap(),
+})]
+#[case::legacy_prev_hash(TransactionSet {
+    previous_ledger_hash: Hash([1; 32]),
+    txs: VecM::default(),
+})]
+fn test_parse_transaction_entries_rejects_legacy_set_in_v1_entry(#[case] legacy: TransactionSet) {
+    let mut entry = v1_history_entry(63, [0; 32], vec![tx_v1_envelope(1)]);
+    entry.tx_set = legacy;
+
+    let err = parse_transaction_entries_for_checkpoint(&frame_xdr(&entry), None).unwrap_err();
+    assert!(
+        err.message.contains("non-empty legacy tx set"),
+        "{}",
+        err.message
+    );
+}
+
 #[test]
 fn test_manager_records_and_verifies_checkpoint() {
     let manager = XdrVerificationManager::new();

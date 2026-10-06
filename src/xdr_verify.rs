@@ -29,8 +29,8 @@ use std::sync::Mutex;
 use stellar_xdr::{
     Frame, GeneralizedTransactionSet, Hash, LedgerHeaderHistoryEntry, Limited, Limits,
     ParallelTxsComponent, ReadXdr, ScpHistoryEntry, StellarValueExt, TransactionHistoryEntry,
-    TransactionHistoryEntryExt, TransactionHistoryResultEntry, TransactionPhase, TransactionSetV1,
-    VecM, WriteXdr,
+    TransactionHistoryEntryExt, TransactionHistoryResultEntry, TransactionPhase, TransactionSet,
+    TransactionSetV1, VecM, WriteXdr,
 };
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio_util::io::StreamReader;
@@ -1155,6 +1155,15 @@ pub(crate) fn parse_transaction_entries_for_checkpoint(
         let computed_hash = match &entry.ext {
             TransactionHistoryEntryExt::V0 => compute_v0_tx_set_hash(&entry.tx_set)?,
             TransactionHistoryEntryExt::V1(generalized_tx_set) => {
+                // CAP-42: the legacy set must be empty when a generalized set
+                // is present. Only the generalized set is hashed, so anything
+                // left in the legacy set would be committed unverified.
+                if entry.tx_set != TransactionSet::default() {
+                    return Err(StorageError::fatal(format!(
+                        "transaction entry for ledger seq {} has both a generalized and a non-empty legacy tx set",
+                        seq
+                    )));
+                }
                 compute_v1_tx_set_hash(generalized_tx_set)?
             }
         };
