@@ -5,4 +5,7 @@
 !.gitignore
 !.github
 !.devcontainer
+!.cargo
+.cargo/*
+!.cargo/audit.toml
 !testdata/**/.well-known
