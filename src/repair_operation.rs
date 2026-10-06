@@ -154,6 +154,19 @@ impl RepairOperation {
             info!("Plan is empty; nothing to repair");
             return Ok(());
         }
+        // A missing or unreadable destination .well-known may be part of the
+        // plan, so only a readable one is compared.
+        if let Ok(Some(dst_state)) = utils::probe_well_known_history_file(
+            &self.dst_store,
+            &self.pipeline_config.storage_config,
+        )
+        .await
+        {
+            utils::check_same_network(
+                self.pipeline_config.source_network_passphrase.as_deref(),
+                dst_state.network_passphrase.as_deref(),
+            )?;
+        }
         let well_known_cp = tracker.well_known;
 
         let stats = ArchiveStats::new();
@@ -621,9 +634,16 @@ impl Operation for RepairOperation {
         )
         .await
         {
-            Ok(Some(state)) => Some(history_format::round_to_lower_checkpoint(
-                state.current_ledger,
-            )),
+            Ok(Some(state)) => {
+                utils::check_same_network(
+                    self.pipeline_config.source_network_passphrase.as_deref(),
+                    state.network_passphrase.as_deref(),
+                )
+                .map_err(|e| pipeline::Error::RepairOperation(Error::Utils(e)))?;
+                Some(history_format::round_to_lower_checkpoint(
+                    state.current_ledger,
+                ))
+            }
             Ok(None) => {
                 info!("No destination .well-known; deriving repair range from source");
                 None

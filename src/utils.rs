@@ -74,6 +74,12 @@ pub enum Error {
         low_checkpoint: u32,
         high_checkpoint: u32,
     },
+
+    #[error("Source network passphrase {source_passphrase:?} does not match the destination's {destination_passphrase:?}")]
+    NetworkMismatch {
+        source_passphrase: String,
+        destination_passphrase: String,
+    },
 }
 
 impl Error {
@@ -691,9 +697,25 @@ pub(crate) async fn fetch_source_network_passphrase(
             None
         }
         Err(e) => {
-            debug!("Could not read source .well-known network passphrase: {e}");
+            warn!("Could not read source .well-known network passphrase: {e}");
             None
         }
+    }
+}
+
+/// Refuse to extend or repair a destination archive from another network,
+/// which would splice two unrelated histories together. Passes when either
+/// side has no passphrase, since there is nothing to compare.
+pub(crate) fn check_same_network(
+    source: Option<&str>,
+    destination: Option<&str>,
+) -> Result<(), Error> {
+    match (source, destination) {
+        (Some(source), Some(destination)) if source != destination => Err(Error::NetworkMismatch {
+            source_passphrase: source.to_string(),
+            destination_passphrase: destination.to_string(),
+        }),
+        _ => Ok(()),
     }
 }
 

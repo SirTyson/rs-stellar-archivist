@@ -5,7 +5,8 @@
 
 use super::utils::{
     copy_testnet_small_archive, corrupt_ledger_cross_file_hash, delete_first_file,
-    file_url_from_path, get_files_by_pattern, start_http_server, testnet_small_archive_path,
+    file_url_from_path, get_files_by_pattern, set_network_passphrase, start_http_server,
+    testnet_small_archive_path,
 };
 use crate::history_format;
 use crate::test_helpers::{
@@ -2720,3 +2721,26 @@ async fn test_plan_refetches_corrupt_present_file_without_verify() {
 
 // Pubnet early-SCP-gap tolerance for repair and repair --dry-run is covered
 // against real pubnet data in tests/pubnet_scp_gap_test.rs.
+
+/// Resuming a mirror into, or repairing, a destination from another network
+/// must fail rather than splice two networks' histories together.
+#[rstest]
+#[case::mirror(false)]
+#[case::repair(true)]
+#[tokio::test]
+async fn test_rejects_destination_from_another_network(#[case] repair: bool) {
+    let dest_dir = TempDir::new().unwrap();
+    copy_testnet_small_archive(dest_dir.path()).unwrap();
+    set_network_passphrase(dest_dir.path(), "Some Other Network ; 2026");
+    let src_url = file_url_from_path(&testnet_small_archive_path());
+    let dest_url = file_url_from_path(dest_dir.path());
+
+    let result = if repair {
+        run_repair(RepairConfig::new(&src_url, &dest_url)).await
+    } else {
+        run_mirror(MirrorConfig::new(&src_url, &dest_url)).await
+    };
+
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("does not match the destination"), "{err}");
+}

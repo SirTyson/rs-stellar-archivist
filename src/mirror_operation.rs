@@ -108,7 +108,13 @@ impl MirrorOperation {
                 )
                 .await
                 {
-                    Ok(Some(has)) => Ok(Some(has.current_ledger)),
+                    Ok(Some(has)) => {
+                        crate::utils::check_same_network(
+                            self.pipeline_config.source_network_passphrase.as_deref(),
+                            has.network_passphrase.as_deref(),
+                        )?;
+                        Ok(Some(has.current_ledger))
+                    }
                     Ok(None) => Ok(None), // No existing archive
                     Err(e) => Err(e.into()),
                 }
