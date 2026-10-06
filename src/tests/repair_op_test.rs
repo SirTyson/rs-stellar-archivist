@@ -2744,3 +2744,40 @@ async fn test_rejects_destination_from_another_network(#[case] repair: bool) {
     let err = result.unwrap_err().to_string();
     assert!(err.contains("does not match the destination"), "{err}");
 }
+
+/// A destination file repair cannot read must fail the run, not be
+/// overwritten: the read error says nothing about the stored copy.
+#[cfg(unix)]
+#[rstest]
+#[case::history("/history-", false)]
+#[case::results_verified("/results-", true)]
+#[tokio::test]
+async fn test_repair_does_not_overwrite_unreadable_file(
+    #[case] pattern: &str,
+    #[case] verify: bool,
+) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dest_dir = TempDir::new().unwrap();
+    copy_testnet_small_archive(dest_dir.path()).unwrap();
+    let file = get_files_by_pattern(dest_dir.path(), pattern)
+        .into_iter()
+        .next()
+        .unwrap();
+    std::fs::write(&file, b"unreadable copy").unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&file).is_ok() {
+        return; // permissions are not enforced, e.g. running as root
+    }
+
+    let src_url = file_url_from_path(&testnet_small_archive_path());
+    let mut config = RepairConfig::new(src_url, file_url_from_path(dest_dir.path()));
+    if verify {
+        config = config.verify();
+    }
+    let result = run_repair(config).await;
+
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(result.is_err());
+    assert_eq!(std::fs::read(&file).unwrap(), b"unreadable copy");
+}
